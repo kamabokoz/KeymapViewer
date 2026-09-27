@@ -149,8 +149,14 @@ export class QrScanner {
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
     this.busy = false;
     this.running = false;
-    this.worker = new Worker(new URL('./qr-worker.js', import.meta.url));
-    this.worker.onmessage = (e) => { this.busy = false; if (e.data) this.onText(e.data); };
+    // Single-file (file://) build injects a factory that makes the worker from a Blob.
+    // If no worker can be created, decode on the main thread with window.jsQR.
+    try {
+      this.worker = globalThis.__KV_QR_WORKER ? globalThis.__KV_QR_WORKER() : new Worker(new URL('./qr-worker.js', import.meta.url));
+      this.worker.onmessage = (e) => { this.busy = false; if (e.data) this.onText(e.data); };
+    } catch (e) {
+      this.worker = null;
+    }
   }
   async start() {
     this.stream = await navigator.mediaDevices.getUserMedia({
@@ -180,7 +186,13 @@ export class QrScanner {
     this.ctx.drawImage(v, sx, sy, side, side, 0, 0, size, size);
     const img = this.ctx.getImageData(0, 0, size, size);
     this.busy = true;
-    this.worker.postMessage({ data: img.data.buffer, width: size, height: size }, [img.data.buffer]);
+    if (this.worker) {
+      this.worker.postMessage({ data: img.data.buffer, width: size, height: size }, [img.data.buffer]);
+    } else if (globalThis.jsQR) {
+      const r = globalThis.jsQR(img.data, size, size, { inversionAttempts: 'dontInvert' });
+      this.busy = false;
+      if (r && r.data) this.onText(r.data);
+    } else this.busy = false;
   }
   stop() {
     this.running = false;
@@ -188,7 +200,7 @@ export class QrScanner {
     if (this.stream) for (const t of this.stream.getTracks()) t.stop();
     this.stream = null;
     this.video.srcObject = null;
-    this.worker.terminate();
+    if (this.worker) this.worker.terminate();
   }
 }
 

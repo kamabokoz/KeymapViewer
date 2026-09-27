@@ -11,6 +11,14 @@ Vial（QMK）と ZMK Studio 対応キーボードのキーマップを読み取�
    - **ZMK Studio（USB / Bluetooth）**：Web Serial / Web Bluetooth を使う。ファームウェア側で ZMK Studio を有効にしておく必要がある（`CONFIG_ZMK_STUDIO=y`、USB の場合は `studio-rpc-usb-uart` snippet）。ロック中なら `&studio_unlock` キーを押す。
 3. 「アプリとしてインストール」でインストールできる。
 
+### ローカル HTML 版
+
+サーバーなしで試す場合は `dist/keymap-viewer-local.html` をダブルクリックで開く（Chrome / Edge）。1 ファイルにすべて埋め込んである。
+
+- ソースを変更したら `python3 tools/build-local.py` で作り直す
+- 保存データは `file://` 用に別管理になる（ホスト版のデータとは共有されない）。移すときはエクスポート / インポートを使う
+- Service Worker は使わない（ファイル自体がローカルにあるのでオフラインでも開ける）。「アプリとしてインストール」は出ない
+
 ## 動作環境の補足
 
 - ZMK Studio の Bluetooth 接続では、Studio サービスとバッテリーサービス（通常の ZMK もアドバタイズする）の両方で機器を探す（DYA Studio と同じ方式）。Windows / macOS では、Studio Unlock キーを押すと接続待ちになるファームウェア（cormoran 版 ZMK など）が必要。iPhone では Bluefy ブラウザで Bluetooth 読み取りができる
