@@ -9,7 +9,11 @@
 <meta name="theme-color" content="#16171a" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Keymap">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="css/style.css">
 <script type="module" src="js/app.js"></script>
 </head>
@@ -22,6 +26,7 @@
   <div class="appbar-right">
     <span id="net" class="net on">オンライン</span>
     <button id="install" class="btn ghost" hidden>アプリとしてインストール</button>
+    <button id="ios-install" class="btn small accent" hidden>ホーム画面に追加</button>
   </div>
 </header>
 
@@ -35,6 +40,12 @@
   </div>
   <p id="cap-note" class="cap-note" hidden></p>
 </section>
+
+<div id="ios-banner" class="ios-banner" hidden>
+  <span>ホーム画面に追加すると、アプリとしてオフラインでも使えます。</span>
+  <button id="ios-banner-open" class="btn small accent">追加のしかた</button>
+  <button id="ios-banner-close" class="btn small ghost" aria-label="閉じる">×</button>
+</div>
 
 <div id="status" class="status" hidden role="status" aria-live="polite">
   <span class="spinner" aria-hidden="true"></span>
@@ -133,6 +144,21 @@
     <li>この画面にカメラを向ける（QR が画面いっぱいに映る距離で）</li>
     <li>すべての QR を受信すると自動で保存されます</li>
   </ol>
+</dialog>
+
+<dialog id="ios-dlg" class="dlg" aria-labelledby="ios-title">
+  <div class="dlg-head">
+    <h2 id="ios-title">ホーム画面に追加</h2>
+    <button class="btn small ghost dlg-close" data-close aria-label="閉じる">×</button>
+  </div>
+  <p class="muted small">iPhone / iPad ではブラウザの仕様上、ボタン 1 つで追加することはできません。次の手順で追加してください。</p>
+  <ol class="ios-steps">
+    <li><span class="ios-num">1</span><span>画面下（iPad は上）の <b>共有ボタン</b> <svg class="ios-share" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M6 11H5v10h14V11h-1"/></svg> をタップ<br><span class="muted small">見当たらない場合は「…」メニューの中にあります</span></span></li>
+    <li><span class="ios-num">2</span><span>メニューを下にスクロールして <b>「ホーム画面に追加」</b> をタップ</span></li>
+    <li><span class="ios-num">3</span><span>右上の <b>「追加」</b> をタップ</span></li>
+  </ol>
+  <p id="ios-browser-note" class="small muted"></p>
+  <p class="small muted">追加したアイコンから開くと、アドレスバーのないアプリとして起動します。データはアプリ側に保存されるので、キーマップはアプリで「QR で受け取る」から取り込んでください。</p>
 </dialog>
 
 <dialog id="scan-dlg" class="dlg" aria-labelledby="scan-title">

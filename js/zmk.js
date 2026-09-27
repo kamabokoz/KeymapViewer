@@ -175,10 +175,21 @@ async function openSerial() {
 }
 
 async function openBle() {
-  const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [BLE_SERVICE] }], optionalServices: [BLE_SERVICE] });
+  // Stock ZMK advertises only the HID + Battery services, so also match on battery_service
+  // (same approach as DYA Studio). Bluefy (iOS) needs upper-case UUIDs and cannot filter on 128-bit ones.
+  const bluefy = /Bluefy/.test(navigator.userAgent);
+  const svcId = bluefy ? BLE_SERVICE.toUpperCase() : BLE_SERVICE;
+  const chrId = bluefy ? BLE_RPC_CHRC.toUpperCase() : BLE_RPC_CHRC;
+  const filters = bluefy ? [{ services: ['battery_service'] }] : [{ services: [svcId] }, { services: ['battery_service'] }];
+  const dev = await navigator.bluetooth.requestDevice({ filters, optionalServices: [svcId] });
   const server = dev.gatt.connected ? dev.gatt : await dev.gatt.connect();
-  const svc = await server.getPrimaryService(BLE_SERVICE);
-  const chr = await svc.getCharacteristic(BLE_RPC_CHRC);
+  let svc;
+  try { svc = await server.getPrimaryService(svcId); }
+  catch (e) {
+    try { dev.gatt.disconnect(); } catch (_) {}
+    throw new Error(`「${dev.name || 'このデバイス'}」には ZMK Studio のサービスがありません。ZMK Studio を有効にしたファームウェアか、分割キーボードならセントラル側を選んでください。`);
+  }
+  const chr = await svc.getCharacteristic(chrId);
   let onData = () => {};
   const handler = (ev) => {
     const v = ev.target.value;

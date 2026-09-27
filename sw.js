@@ -1,5 +1,5 @@
 // Service worker: precache the app shell so it works fully offline.
-const VERSION = 'v1.1.1';
+const VERSION = 'v1.2.0';
 const CACHE = 'keymap-viewer-' + VERSION;
 const ASSETS = [
   './',
@@ -22,6 +22,7 @@ const ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {

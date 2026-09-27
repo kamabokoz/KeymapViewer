@@ -6,10 +6,9 @@ import { renderKeyboard } from './render.js';
 import { buildFrames, drawQr, FrameCollector, QrScanner, shareSupported, scanSupported } from './share.js';
 
 const $ = (s, r = document) => r.querySelector(s);
-// ZMK Studio over BLE only works from Linux (the keyboard does not advertise the Studio service,
-// and Windows / macOS / Android browsers cannot reach an OS-connected HID keyboard).
-const IS_LINUX = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
-const BLE_NOTE = 'ZMK Studio の Bluetooth 読み取りは ZMK の仕様で Linux の Chrome / Edge のみ対応です。Windows・macOS・Android ではキーボードが一覧に表示されないため、USB ケーブルで接続して「ZMK Studio（USB）」を使ってください。';
+const BLE_NOTE = 'キーボードが一覧に出ない場合は、キーボードの Studio Unlock キーを押してから、もう一度「ZMK Studio（Bluetooth）」を押してください（Windows・macOS では、アンロック時に接続待ちになるファームウェア〔DYA Studio 対応の cormoran 版 ZMK など〕が必要です）。一覧にはマウスなど他の Bluetooth 機器も表示されることがあります。';
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const prefs = (() => {
@@ -159,7 +158,7 @@ async function doRead(kind) {
     await openKeyboard(rec.id);
   } catch (e) {
     console.error(e);
-    if (kind === 'zmk-ble' && e.cancelled && !IS_LINUX) setStatus(BLE_NOTE, 'warn');
+    if (kind === 'zmk-ble' && e.cancelled) setStatus(BLE_NOTE, 'warn');
     else if (e.cancelled || e.name === 'NotFoundError' || e.name === 'AbortError') setStatus(null);
     else setStatus('読み取りに失敗しました: ' + e.message, 'error');
   } finally {
@@ -395,7 +394,6 @@ function bind() {
   for (const [sel, ok, api] of caps) { $(sel).disabled = !ok; if (!ok) missing.push(api); }
   const notes = [];
   if (missing.length) notes.push(`このブラウザは ${missing.join(' / ')} に対応していないため、一部の読み取りは使えません（デスクトップ版 Chrome / Edge 推奨）。保存済みキーマップの表示とインポートは利用できます。`);
-  if (zmkBleSupported() && !IS_LINUX) notes.push(BLE_NOTE);
   if (notes.length) {
     $('#cap-note').hidden = false;
     $('#cap-note').textContent = notes.join(' ');
@@ -410,6 +408,22 @@ function bind() {
   addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferred = e; $('#install').hidden = false; });
   $('#install').addEventListener('click', async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; $('#install').hidden = true; });
   addEventListener('appinstalled', () => { $('#install').hidden = true; });
+
+  // iOS has no install prompt: show a button that explains "Add to Home Screen"
+  if (IS_IOS && !IS_STANDALONE) {
+    const safari = !/CriOS|FxiOS|EdgiOS|OPiOS|Bluefy/.test(navigator.userAgent);
+    $('#ios-browser-note').textContent = safari ? '' : 'Safari 以外のブラウザでは、共有ボタンの位置が異なる場合があります。うまくいかない場合は Safari で開いてください。';
+    $('#ios-install').hidden = false;
+    $('#ios-install').addEventListener('click', () => $('#ios-dlg').showModal());
+    let seen = false;
+    try { seen = localStorage.getItem('kv-ios-hint') === '1'; } catch (e) {}
+    if (!seen) $('#ios-banner').hidden = false;
+    $('#ios-banner-open').addEventListener('click', () => $('#ios-dlg').showModal());
+    $('#ios-banner-close').addEventListener('click', () => {
+      $('#ios-banner').hidden = true;
+      try { localStorage.setItem('kv-ios-hint', '1'); } catch (e) {}
+    });
+  }
 }
 
 async function init() {

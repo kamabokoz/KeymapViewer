@@ -13,7 +13,8 @@ Vial（QMK）と ZMK Studio 対応キーボードのキーマップを読み取�
 
 ## 動作環境の補足
 
-- ZMK Studio の Bluetooth 読み取りは ZMK 側の仕様で Linux のみ対応（キーボードが Studio のサービスを広告しないうえ、OS に接続済みのキーボードには Windows / macOS / Android のブラウザからアクセスできない）。それ以外の OS では USB を使う
+- ZMK Studio の Bluetooth 接続では、Studio サービスとバッテリーサービス（通常の ZMK もアドバタイズする）の両方で機器を探す（DYA Studio と同じ方式）。Windows / macOS では、Studio Unlock キーを押すと接続待ちになるファームウェア（cormoran 版 ZMK など）が必要。iPhone では Bluefy ブラウザで Bluetooth 読み取りができる
+- iPhone / iPad では「ホーム画面に追加」ボタンから追加手順を表示する（iOS には自動でインストールを促す仕組みがないため）
 - カメラ（QR で受け取る）は HTTPS でしか使えない。iPhone の Safari やホーム画面に追加した PWA でも動く
 
 ## 機能
