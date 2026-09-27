@@ -1,5 +1,5 @@
 import { readVial, vialSupported } from './vial.js';
-import { readZmk, zmkSerialSupported, zmkBleSupported } from './zmk.js';
+import { readZmk, zmkSerialSupported, zmkBleSupported, zmkLog } from './zmk.js';
 import { listKeyboards, getKeyboard, putKeyboard, deleteKeyboard, requestPersistence } from './db.js';
 import { buildView } from './keymap.js';
 import { renderKeyboard } from './render.js';
@@ -43,6 +43,7 @@ function setStatus(msg, kind = 'info', { cancellable = false } = {}) {
   $('#status-text').textContent = msg;
   $('#status-cancel').hidden = !cancellable;
   $('#status-close').hidden = kind === 'busy';
+  $('#status-log').hidden = !(kind === 'error' && state.lastRead === 'zmk' && zmkLog.length);
 }
 
 // ---------------- list ----------------
@@ -148,6 +149,7 @@ async function doRead(kind) {
     setStatus('デバイスを選択してください…', 'busy');
     let rec;
     const progress = (m, o = {}) => setStatus(m, o.locked ? 'warn' : 'busy', { cancellable: !!o.locked });
+    state.lastRead = kind === 'vial' ? 'vial' : 'zmk';
     if (kind === 'vial') rec = await readVial(progress);
     else rec = await readZmk(kind === 'zmk-ble' ? 'ble' : 'serial', progress, state.abort.signal);
     const prev = await getKeyboard(rec.id);
@@ -169,8 +171,8 @@ async function doRead(kind) {
 }
 
 // ---------------- import / export ----------------
-function download(name, obj) {
-  const blob = new Blob([JSON.stringify(obj, null, 1)], { type: 'application/json' });
+function download(name, obj, type = 'application/json') {
+  const blob = new Blob([typeof obj === 'string' ? obj : JSON.stringify(obj, null, 1)], { type });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
@@ -291,6 +293,12 @@ function bind() {
   $('#read-zmk-ble').addEventListener('click', () => doRead('zmk-ble'));
   $('#status-cancel').addEventListener('click', () => state.abort && state.abort.abort());
   $('#status-close').addEventListener('click', () => setStatus(null));
+  $('#status-log').addEventListener('click', async () => {
+    const text = zmkLog.join('\n');
+    try { await navigator.clipboard.writeText(text); $('#status-log').textContent = 'コピーしました'; }
+    catch (e) { download('keymap-viewer-log.txt', text, 'text/plain'); }
+    setTimeout(() => { $('#status-log').textContent = '詳細ログをコピー'; }, 2000);
+  });
 
   $('#kb-list').addEventListener('click', (e) => {
     const b = e.target.closest('.kb-item');

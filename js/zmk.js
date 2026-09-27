@@ -200,6 +200,7 @@ async function openBle() {
   chr.addEventListener('characteristicvaluechanged', handler);
   return {
     label: 'BLE',
+    deviceName: dev.name || '',
     set onData(fn) { onData = fn; },
     write: (bytes) => chr.writeValueWithoutResponse(bytes),
     async close() {
@@ -214,42 +215,82 @@ async function openBle() {
 const SUBSYS = { core: 3, behaviors: 4, keymap: 5 };
 const META_ERRORS = ['GENERIC', 'UNLOCK_REQUIRED', 'RPC_NOT_FOUND', 'MSG_DECODE_FAILED', 'MSG_ENCODE_FAILED'];
 
+// Diagnostic log shared with the UI (copyable after a failure)
+export const zmkLog = [];
+let logT0 = 0;
+function log(msg) {
+  const t = ((performance.now() - logT0) / 1000).toFixed(2).padStart(6);
+  zmkLog.push(`${t}s ${msg}`);
+  if (zmkLog.length > 400) zmkLog.splice(0, zmkLog.length - 400);
+}
+
 class RpcClient {
-  constructor(transport) {
+  constructor(transport, onRx) {
     this.t = transport;
     this.nextId = 1;
     this.pending = new Map();
     this.notifyHandlers = new Set();
+    this.lastRx = performance.now();
+    this.rxBytes = 0;
+    this.onRx = onRx || (() => {});
     this.deframer = new Deframer((f) => this.onFrame(f));
-    transport.onData = (d) => this.deframer.push(d);
+    transport.onData = (d) => {
+      this.lastRx = performance.now();
+      this.rxBytes += d.length;
+      this.onRx(this.rxBytes);
+      this.deframer.push(d);
+    };
   }
   onFrame(f) {
     let msg;
-    try { msg = pbDecode(f, 'Response'); } catch (e) { console.warn('decode failed', e); return; }
+    try { msg = pbDecode(f, 'Response'); }
+    catch (e) {
+      log(`フレームのデコード失敗 (${f.length}B): ${e.message} [${Array.from(f.slice(0, 24), (b) => b.toString(16).padStart(2, '0')).join(' ')}…]`);
+      return;
+    }
     if (msg.request_response) {
       const rr = msg.request_response;
       const p = this.pending.get(rr.request_id);
-      if (!p) return;
+      if (!p) { log(`不明な request_id=${rr.request_id} の応答を無視`); return; }
       this.pending.delete(rr.request_id);
-      clearTimeout(p.timer);
+      clearInterval(p.timer);
+      log(`← #${rr.request_id} 応答 ${f.length}B (${Math.round(performance.now() - p.sent)}ms)`);
       if (rr.meta && rr.meta.simple_error !== undefined) {
         const code = META_ERRORS[rr.meta.simple_error] || String(rr.meta.simple_error);
+        log(`  エラー: ${code}`);
         p.reject(Object.assign(new Error('ZMK RPC エラー: ' + code), { code }));
+      } else if (rr.meta && rr.meta.no_response) {
+        log('  no_response');
+        p.resolve({});
       } else p.resolve(rr);
     } else if (msg.notification) {
+      log(`← 通知 ${JSON.stringify(msg.notification)}`);
       for (const h of this.notifyHandlers) h(msg.notification);
     }
   }
-  call(subsystem, fields, timeout = 5000) {
+  // idle: give up only when nothing at all has been received for this long (BLE can be slow)
+  call(subsystem, fields, idle = 20000) {
     const id = this.nextId++;
     const body = pbEncode([[1, id], [SUBSYS[subsystem], pbEncode(fields)]]);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error('キーボードから応答がありません（タイムアウト）'));
-      }, timeout);
-      this.pending.set(id, { resolve: (rr) => resolve(rr[subsystem] || {}), reject, timer });
-      Promise.resolve(this.t.write(frame(body))).catch((e) => { clearTimeout(timer); this.pending.delete(id); reject(e); });
+      const sent = performance.now();
+      const timer = setInterval(() => {
+        const quiet = performance.now() - Math.max(this.lastRx, sent);
+        if (quiet > idle) {
+          clearInterval(timer);
+          this.pending.delete(id);
+          log(`× #${id} タイムアウト（${Math.round(quiet / 1000)}秒間 受信なし）`);
+          reject(new Error('キーボードから応答がありません（タイムアウト）'));
+        }
+      }, 500);
+      this.pending.set(id, { resolve: (rr) => resolve(rr[subsystem] || {}), reject, timer, sent });
+      const bytes = frame(body);
+      log(`→ #${id} ${subsystem} ${JSON.stringify(fields.map(([f, v]) => [f, typeof v === 'object' ? Array.from(v) : v]))} (${bytes.length}B)`);
+      Promise.resolve(this.t.write(bytes)).catch((e) => {
+        clearInterval(timer); this.pending.delete(id);
+        log(`× #${id} 送信失敗: ${e.message}`);
+        reject(new Error('キーボードへの送信に失敗しました: ' + e.message));
+      });
     });
   }
   waitNotification(pred, signal) {
@@ -270,40 +311,62 @@ const LOCKED = 0, UNLOCKED = 1;
  * @param {AbortSignal} signal  aborts the unlock wait
  */
 export async function readZmk(kind, progress = () => {}, signal) {
+  zmkLog.length = 0;
+  logT0 = performance.now();
+  log(`開始: ${kind === 'ble' ? 'Bluetooth' : 'USB'} / ${navigator.userAgent}`);
   let t;
   try {
     t = kind === 'ble' ? await openBle() : await openSerial();
+    log(`接続しました (${t.label}${t.deviceName ? ': ' + t.deviceName : ''})`);
   } catch (e) {
+    log(`接続失敗: ${e.name || ''} ${e.message}`);
     if (e && (e.name === 'NotFoundError' || e.name === 'AbortError')) throw Object.assign(new Error('キャンセルされました'), { cancelled: true });
     throw e;
   }
-  const rpc = new RpcClient(t);
-  try {
-    progress('デバイス情報を取得中…');
-    const core = await rpc.call('core', [[1, true]]);
-    const info = core.get_device_info || {};
-
-    const lock = await rpc.call('core', [[2, true]]);
-    if ((lock.get_lock_state ?? LOCKED) !== UNLOCKED) {
-      progress('キーボードがロックされています。キーボードの Studio Unlock キー（&studio_unlock）を押してください。', { locked: true });
-      await rpc.waitNotification((n) => n.core && n.core.lock_state_changed === UNLOCKED, signal);
+  let stepLabel = '';
+  const rpc = new RpcClient(t, (n) => { if (n > 512 && stepLabel) progress(`${stepLabel}（受信 ${(n / 1024).toFixed(1)} KB）`); });
+  const waitUnlock = async () => {
+    progress('キーボードがロックされています。キーボードの Studio Unlock キー（&studio_unlock）を押してください。', { locked: true });
+    log('アンロック待ち');
+    await rpc.waitNotification((n) => n.core && n.core.lock_state_changed === UNLOCKED, signal);
+    log('アンロックされました');
+  };
+  // run one RPC; if the keyboard reports UNLOCK_REQUIRED, wait for the unlock key and retry
+  const step = async (label, subsystem, fields) => {
+    stepLabel = label;
+    progress(label);
+    for (let attempt = 0; ; attempt++) {
+      try { return await rpc.call(subsystem, fields); }
+      catch (e) {
+        if (e.code === 'UNLOCK_REQUIRED' && attempt < 2) { await waitUnlock(); progress(label); continue; }
+        throw Object.assign(new Error(`${label.replace(/を(取得|確認)中…\s*(\(.*\))?$/, 'の$1$2')}に失敗しました: ${e.message}`), { code: e.code });
+      }
     }
+  };
+  try {
+    const core = await step('デバイス情報を取得中…', 'core', [[1, true]]);
+    const info = core.get_device_info || {};
+    log(`デバイス: ${info.name || '(名前なし)'}`);
 
-    progress('キーマップを取得中…');
-    const km = (await rpc.call('keymap', [[1, true]])).get_keymap;
-    if (!km) throw new Error('キーマップを取得できませんでした');
-    progress('物理レイアウトを取得中…');
-    const pl = (await rpc.call('keymap', [[6, true]])).get_physical_layouts || { active_layout_index: 0, layouts: [] };
+    const lock = await step('ロック状態を確認中…', 'core', [[2, true]]);
+    log(`ロック状態: ${lock.get_lock_state ?? '(なし)'}`);
+    if ((lock.get_lock_state ?? LOCKED) !== UNLOCKED) await waitUnlock();
 
-    progress('ビヘイビア一覧を取得中…');
-    const ids = ((await rpc.call('behaviors', [[1, true]])).list_all_behaviors || {}).behaviors || [];
+    const km = (await step('キーマップを取得中…', 'keymap', [[1, true]])).get_keymap;
+    if (!km) throw new Error('キーマップを取得できませんでした（空の応答）');
+    log(`レイヤー ${km.layers.length}, キー ${Math.max(0, ...km.layers.map((l) => l.bindings.length))}`);
+    const pl = (await step('物理レイアウトを取得中…', 'keymap', [[6, true]])).get_physical_layouts || { active_layout_index: 0, layouts: [] };
+    log(`物理レイアウト ${pl.layouts.length}`);
+
+    const ids = ((await step('ビヘイビア一覧を取得中…', 'behaviors', [[1, true]])).list_all_behaviors || {}).behaviors || [];
+    log(`ビヘイビア ${ids.length}: ${ids.join(',')}`);
     const behaviors = {};
     let i = 0;
     for (const id of ids) {
-      progress(`ビヘイビア情報を取得中… (${++i}/${ids.length})`);
-      const d = (await rpc.call('behaviors', [[2, pbEncode([[1, id]])]])).get_behavior_details;
+      const d = (await step(`ビヘイビア情報を取得中… (${++i}/${ids.length})`, 'behaviors', [[2, pbEncode([[1, id]])]])).get_behavior_details;
       if (d) behaviors[id] = { display_name: d.display_name || '', metadata: d.metadata || [] };
     }
+    log('完了');
 
     const serial = (info.serial_number || []).map((b) => b.toString(16).padStart(2, '0')).join('');
     const name = info.name || 'ZMK keyboard';
@@ -324,6 +387,9 @@ export async function readZmk(kind, progress = () => {}, signal) {
         behaviors,
       },
     };
+  } catch (e) {
+    log(`失敗: ${e.message}`);
+    throw e;
   } finally {
     await t.close();
   }
