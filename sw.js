@@ -1,5 +1,5 @@
 // Service worker: precache the app shell so it works fully offline.
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.1.1';
 const CACHE = 'keymap-viewer-' + VERSION;
 const ASSETS = [
   './',

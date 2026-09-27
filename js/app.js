@@ -6,6 +6,10 @@ import { renderKeyboard } from './render.js';
 import { buildFrames, drawQr, FrameCollector, QrScanner, shareSupported, scanSupported } from './share.js';
 
 const $ = (s, r = document) => r.querySelector(s);
+// ZMK Studio over BLE only works from Linux (the keyboard does not advertise the Studio service,
+// and Windows / macOS / Android browsers cannot reach an OS-connected HID keyboard).
+const IS_LINUX = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
+const BLE_NOTE = 'ZMK Studio の Bluetooth 読み取りは ZMK の仕様で Linux の Chrome / Edge のみ対応です。Windows・macOS・Android ではキーボードが一覧に表示されないため、USB ケーブルで接続して「ZMK Studio（USB）」を使ってください。';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const prefs = (() => {
@@ -155,7 +159,8 @@ async function doRead(kind) {
     await openKeyboard(rec.id);
   } catch (e) {
     console.error(e);
-    if (e.cancelled || e.name === 'NotFoundError' || e.name === 'AbortError') setStatus(null);
+    if (kind === 'zmk-ble' && e.cancelled && !IS_LINUX) setStatus(BLE_NOTE, 'warn');
+    else if (e.cancelled || e.name === 'NotFoundError' || e.name === 'AbortError') setStatus(null);
     else setStatus('読み取りに失敗しました: ' + e.message, 'error');
   } finally {
     state.busy = false;
@@ -388,9 +393,12 @@ function bind() {
   ];
   const missing = [];
   for (const [sel, ok, api] of caps) { $(sel).disabled = !ok; if (!ok) missing.push(api); }
-  if (missing.length) {
+  const notes = [];
+  if (missing.length) notes.push(`このブラウザは ${missing.join(' / ')} に対応していないため、一部の読み取りは使えません（デスクトップ版 Chrome / Edge 推奨）。保存済みキーマップの表示とインポートは利用できます。`);
+  if (zmkBleSupported() && !IS_LINUX) notes.push(BLE_NOTE);
+  if (notes.length) {
     $('#cap-note').hidden = false;
-    $('#cap-note').textContent = `このブラウザは ${missing.join(' / ')} に対応していないため、一部の読み取りは使えません（デスクトップ版 Chrome / Edge 推奨）。保存済みキーマップの表示とインポートは利用できます。`;
+    $('#cap-note').textContent = notes.join(' ');
   }
 
   // online indicator
